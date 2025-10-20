@@ -67,9 +67,10 @@ def normalize_plan(raw: Any) -> List[Dict[str, Any]]:
 
 
 def fallback_execute(page) -> Dict[str, Any]:
-    title, href = core_search(page, SEARCH_QUERY)
-    if not title: raise RuntimeError(f"no results for '{SEARCH_QUERY}'")
-    return {"first_result": {"title": title, "url": href}}
+    title, href, mode = core_search(page, SEARCH_QUERY)
+    if not title:
+        raise RuntimeError(f"no results for '{SEARCH_QUERY}'")
+    return {"first_result": {"title": title, "url": href}, "_mode": f"fallback_core_{mode}"}
 
 def normalize_call_tool_result(res) -> dict:
     try:

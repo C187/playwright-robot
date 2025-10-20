@@ -64,34 +64,93 @@ def find_first_result(page):
     return None
 
 def core_search(page, query: str):
-    """Deterministic search path used by both core and agent fallback."""
+    """Search via UI when possible; fall back to direct /search/all-city?keys=... .
+       Returns (title, url, mode)."""
     dismiss_banners(page)
-    try:
-        wait_click(page, role="button", name="Search")
-    except Exception:
-        pass
+    used = "ui"
+
+    # Try to open + type into a real input
+    with contextlib.suppress(Exception):
+        wait_click(page, role="button", name=re.compile(r"^search$", re.I))
+
     typed = False
-    try:
-        wait_fill(page, role="textbox", name="Search", text=query); typed = True
-    except Exception:
-        for sel in ["input[type='search']", "input[name='q']", "input[aria-label='Search']"]:
-            try:
-                wait_fill(page, selector=sel, text=query); typed = True; break
-            except Exception:
-                continue
+    for sel in [
+        "form[role='search'] input[type='search']",
+        "form[role='search'] input[name='keys']",
+        "form[role='search'] input[name='q']",
+        "input[type='search']",
+        "input[name='keys']",
+        "input[name='q']",
+        "input[aria-label*='Search' i]",
+    ]:
+        try:
+            page.wait_for_selector(sel, timeout=2000)
+            page.fill(sel, query, timeout=2000)
+            typed = True
+            break
+        except Exception:
+            continue
+
     if typed:
-        page.keyboard.press("Enter"); wait_for_results_page(page)
+        page.keyboard.press("Enter")
     else:
-        # fallback direct search
-        for qparam in ["q", "query", "search"]:
-            with contextlib.suppress(Exception):
-                page.goto(f"{BASE_URL}search?{qparam}={query}", timeout=20000)
-                break
-        wait_for_results_page(page)
-    first = find_first_result(page)
-    if not first:
-        return None, None
-    title = (first.inner_text() or "").strip()
-    href = first.get_attribute("href") or ""
-    if href and href.startswith("/"): href = BASE_URL.rstrip("/") + href
-    return title, href
+        # Deterministic direct route to results (avoid /search root to skip tab page)
+        used = "direct"
+        page.goto(f"{BASE_URL}search/all-city?keys={query}", timeout=15000, wait_until="domcontentloaded")
+
+    # Wait for results page state
+    with contextlib.suppress(Exception):
+        page.wait_for_url(re.compile(r"lacity\.gov/.+search", re.I), timeout=10000)
+    with contextlib.suppress(Exception):
+        page.wait_for_load_state("domcontentloaded", timeout=8000)
+
+    # Ensure a results container is present (Drupal + Google CSE patterns)
+    for sel in ["div.gsc-results", ".search-results", "main"]:
+        with contextlib.suppress(Exception):
+            page.wait_for_selector(sel, timeout=4000)
+            break
+
+    def first_organic():
+        candidates = [
+            "div.gsc-results .gsc-webResult a.gs-title",
+            "div.gsc-results .gs-title a",
+            ".search-results .search-result h3 a",
+            "main article h3 a",
+            "main h3 a[href]",
+        ]
+        for sel in candidates:
+            locs = page.locator(sel)
+            n = min(locs.count(), 20)
+            for i in range(n):
+                a = locs.nth(i)
+                text = (a.inner_text() or "").strip()
+                href = (a.get_attribute("href") or "").strip()
+                if not text or not href:
+                    continue
+                # Filter out navigational/tabs & anything under /search
+                if "/search" in href.lower():
+                    continue
+                if re.search(r"\bAll LA City Websites\b", text, re.I):
+                    continue
+                return text, href
+        # last resort: any non-/search link in main
+        locs = page.locator("main a[href]:not([href^='#'])")
+        n = min(locs.count(), 40)
+        for i in range(n):
+            a = locs.nth(i)
+            text = (a.inner_text() or "").strip()
+            href = (a.get_attribute("href") or "").strip()
+            if text and href and "/search" not in href.lower() and not re.search(r"\bAll LA City Websites\b", text, re.I):
+                return text, href
+        return None
+
+    picked = first_organic()
+    if not picked:
+        with contextlib.suppress(Exception):
+            page.screenshot(path="core_search_last.png", full_page=True)
+        return None, None, used
+
+    title, url = picked
+    if url.startswith("/"):
+        url = BASE_URL.rstrip("/") + url
+    return title, url, used

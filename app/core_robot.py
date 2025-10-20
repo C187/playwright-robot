@@ -14,20 +14,30 @@ def run():
         try:
             log("goto homepage")
             page.goto(TARGET_URL, timeout=20000, wait_until="domcontentloaded")
-            title, href = core_search(page, SEARCH_QUERY)
+
+            title, href, mode = core_search(page, SEARCH_QUERY)
+            log(f"search mode: {mode}")
             if not title:
-                print(f"Failure: no results found for '{SEARCH_QUERY}'"); return 1
+                print(f"Failure: no results found for '{SEARCH_QUERY}'")
+                return 1
+
             print(f"Success! Query='{SEARCH_QUERY}' | First result: {title} | URL: {href}")
             return 0
+
         except PWTimeoutError as e:
-            print(f"Failure: timeout: {e}"); return 2
+            print(f"Failure: timeout: {e}")
+            return 2
         except KeyboardInterrupt:
-            log("Interrupted; shutting down cleanly"); return 130
+            log("Interrupted; shutting down cleanly")
+            return 130
         except (PWError, Exception) as e:
-            print(f"Failure: unexpected error: {e}"); return 3
+            print(f"Failure: unexpected error: {e}")
+            return 3
         finally:
-            with contextlib.suppress(Exception): ctx.close()
-            with contextlib.suppress(Exception): browser.close()
+            with contextlib.suppress(Exception):
+                ctx.close()
+            with contextlib.suppress(Exception):
+                browser.close()
 
 if __name__ == "__main__":
     sys.exit(run())
